@@ -8,17 +8,21 @@ import {
   TouchableOpacity,
   ScrollView,
   Image,
+  ActivityIndicator,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 
 const Sch = () => {
   const [searchText, setSearchText] = useState("");
-  const [wordCount, setWordCount] = useState(""); // Word count input
-  const [qaList, setQaList] = useState([]); // List to hold scenes and generated images
-  const [inputHeight, setInputHeight] = useState(50); // Initial height of the text box
+  const [wordCount, setWordCount] = useState("");
+  const [qaList, setQaList] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [inputHeight, setInputHeight] = useState(50);
+  const [currentQuery, setCurrentQuery] = useState(""); // Track the current query
 
-  const generateImage = async (sceneText) => {
-    console.log("Generating image...");
+  const MAX_RETRIES = 5; // Maximum number of retries for image generation
+
+  const generateImage = async (sceneText, retries = MAX_RETRIES) => {
     try {
       const API_URL = "https://api-inference.huggingface.co/models/ZB-Tech/Text-to-Image";
       const HEADERS = {
@@ -32,7 +36,7 @@ const Sch = () => {
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to generate image for the scene: "${sceneText}". Status: ${response.status}`);
+        throw new Error(`Failed to generate image. Status: ${response.status}`);
       }
 
       const imageBlob = await response.blob();
@@ -40,28 +44,35 @@ const Sch = () => {
         const reader = new FileReader();
         reader.onloadend = () => resolve(reader.result);
         reader.onerror = reject;
-        reader.readAsDataURL(imageBlob); // Convert Blob to Base64 Data URL
+        reader.readAsDataURL(imageBlob);
       });
 
-      return base64Data; // Return Base64 data URL
+      return base64Data;
     } catch (error) {
-      console.error("Error generating image:", error);
-      return null; // Return null in case of error
+      console.error(`Error generating image for scene "${sceneText}":`, error);
+      if (retries > 0) {
+        console.log(`Retrying after 4 seconds... (${MAX_RETRIES - retries + 1}/${MAX_RETRIES})`);
+        await new Promise((resolve) => setTimeout(resolve, 20000)); // Wait for 4 seconds
+        return generateImage(sceneText, retries - 1);
+      }
+      console.error(`Failed to generate image after ${MAX_RETRIES} attempts.`);
+      return null;
     }
   };
 
   const handleSearch = async () => {
-    console.log(`Input: ${searchText}, Word Limit: ${wordCount}`);
     if (searchText.trim()) {
+      setLoading(true);
+      setCurrentQuery(searchText); // Set the query
       try {
-        const response = await fetch("https://a1a7-34-142-219-255.ngrok-free.app/", {
+        const response = await fetch("https://4ea6-34-168-189-250.ngrok-free.app/", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
             input: searchText,
-            word_limit: wordCount ? parseInt(wordCount, 10) : 0, // Send word limit
+            word_limit: wordCount ? parseInt(wordCount, 10) : 0,
           }),
         });
 
@@ -69,11 +80,10 @@ const Sch = () => {
           throw new Error(`Error: ${response.statusText}`);
         }
 
-        const scenes = await response.json(); // Response should be an array of scenes
-
+        const scenes = await response.json();
         const updatedQaList = [];
         for (const scene of scenes) {
-          const imageUrl = await generateImage(scene.scene_text); // Generate image for each scene
+          const imageUrl = await generateImage(scene.scene_text);
           updatedQaList.push({
             scene_no: scene.scene_no,
             scene_text: scene.scene_text,
@@ -81,11 +91,13 @@ const Sch = () => {
           });
         }
 
-        setQaList((prev) => [...prev, ...updatedQaList]); // Update QA list
-        setSearchText(""); // Clear input fields
+        setQaList(updatedQaList);
+        setSearchText("");
         setWordCount("");
       } catch (error) {
         console.error("Failed to fetch story:", error);
+      } finally {
+        setLoading(false);
       }
     }
   };
@@ -100,7 +112,28 @@ const Sch = () => {
         style={{ flex: 1 }}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Display the Q&A List */}
+        {/* Display Current Query */}
+        {currentQuery && (
+          <View
+            style={{
+              marginBottom: 20,
+              padding: 15,
+              backgroundColor: "#FEF9F2",
+              borderRadius: 10,
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.1,
+              shadowRadius: 4,
+              elevation: 2,
+            }}
+          >
+            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#000" }}>
+              Query: {currentQuery}
+            </Text>
+          </View>
+        )}
+
+        {/* Display Scenes */}
         {qaList.map((qa, index) => (
           <View
             key={index}
@@ -116,7 +149,7 @@ const Sch = () => {
               elevation: 2,
             }}
           >
-            <Text style={{ fontSize: 16, color: "#000", fontWeight: "bold" }}>
+            <Text style={{ fontSize: 16, color: "#000", marginTop: 10 }}>
               Scene {qa.scene_no}:
             </Text>
             <Text style={{ fontSize: 16, color: "#000", marginTop: 5 }}>
@@ -139,7 +172,6 @@ const Sch = () => {
 
         {/* Input Section */}
         <View style={{ marginTop: 20 }}>
-          {/* Word Count Input */}
           <View
             style={{
               flexDirection: "row",
@@ -167,7 +199,6 @@ const Sch = () => {
             />
           </View>
 
-          {/* Main Query Input */}
           <View
             style={{
               flexDirection: "row",
@@ -182,8 +213,8 @@ const Sch = () => {
               elevation: 3,
             }}
           >
-            <TouchableOpacity onPress={handleSearch}>
-              <MaterialIcons name="search" size={24} color="#000" />
+            <TouchableOpacity onPress={handleSearch} disabled={loading}>
+              <MaterialIcons name="search" size={24} color={loading ? "#AAA" : "#000"} />
             </TouchableOpacity>
             <TextInput
               placeholder="Type your query..."
@@ -203,6 +234,14 @@ const Sch = () => {
             />
           </View>
         </View>
+
+        {/* Loading Indicator */}
+        {loading && (
+          <View style={{ marginTop: 20, alignItems: "center" }}>
+            <ActivityIndicator size="large" color="#000" />
+            <Text style={{ marginTop: 10, color: "#000", fontSize: 16 }}>Processing your query...</Text>
+          </View>
+        )}
       </ScrollView>
     </KeyboardAvoidingView>
   );
